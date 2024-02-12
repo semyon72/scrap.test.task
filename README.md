@@ -12,7 +12,7 @@ Web scraping - Тестове завдання
 ```
 3. Перейдіть до утвореної теки з назвою `scrap.test.task` в середині `some_dir`
 ```
-   $ cd scrap.test.task.git
+   $ cd scrap.test.task
 ```
 4. Ініціалізуйте Python virtual environment
 ```
