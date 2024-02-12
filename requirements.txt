@@ -1,0 +1,8 @@
+requests
+lxml
+beautifulsoup4
+SQLAlchemy >= 2.*
+psycopg
+python-dotenv
+pandas
+pyarrow
