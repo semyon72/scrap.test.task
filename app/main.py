@@ -16,7 +16,6 @@ import requests
 
 dotenv.load_dotenv()
 
-
 import db
 
 
@@ -189,7 +188,7 @@ class ItemInfo:
         }
 
 
-if __name__ == '__main__':
+def main():
     base_dir = Path(__file__).parent
     os.chdir(base_dir)
     pid_file_name = os.getenv('PIDFILE')
@@ -226,5 +225,31 @@ if __name__ == '__main__':
                     time.sleep(sleep_after_request)
     finally:
         pid_file_path.unlink(missing_ok=True)
+
+
+def main_forever():
+    ctime = datetime.datetime.now()
+    try:
+        stime = datetime.time.fromisoformat(str(os.getenv('SCHED_TIME_START')))
+    except ValueError:
+        stime = ctime
+    else:
+        stime = ctime.replace(hour=stime.hour, minute=stime.minute, second=stime.second, microsecond=0)
+
+    if ctime < stime:
+        time.sleep((stime - ctime).seconds)
+    once = db.booleanize(os.getenv('SCHED_ONCE'))
+    while True:
+        main()
+        if once:
+            break
+        stime += datetime.timedelta(seconds=86400)
+        time.sleep((stime - datetime.datetime.now()).seconds)
+
+
+if __name__ == '__main__':
+    main_forever()
+
+
 
 

@@ -7,11 +7,9 @@ import zipfile
 from pathlib import Path
 
 import pandas as pd
-from typing import List
-from typing import Optional
-from sqlalchemy import ForeignKey, String, Date, BigInteger, create_engine, text, insert
+from sqlalchemy import String, Date, BigInteger, create_engine, text, URL
 from sqlalchemy.exc import NoResultFound
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship, Session
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
 
 
 class Base(DeclarativeBase):
@@ -47,7 +45,9 @@ def booleanize(s: str) -> bool:
 
 DB_USER = os.getenv('DB_USER') or 'scrap_test_task_user'
 DB_PASSWORD = os.getenv('DB_PASSWORD') or '12345678'
-DB_NAME = os.getenv('DB_NAME') or 'localhost/scrap_test_task'
+DB_HOST = os.getenv('DB_HOST') or 'localhost'
+DB_PORT = int(os.getenv('DB_PORT')) or 5432
+DB_NAME = os.getenv('DB_NAME') or 'scrap_test_task'
 DB_ECHO = booleanize(os.getenv('DB_ECHO') or 'True')
 DB_DROP_TABLE = booleanize(os.getenv('DB_DROP_TABLE') or 'False')
 DUMPS_DIR = os.getenv('DUMPS_DIR') or './dumps'
@@ -55,7 +55,13 @@ DUMPS_DIR = os.getenv('DUMPS_DIR') or './dumps'
 if not Path(DUMPS_DIR).is_dir():
     Path(DUMPS_DIR).mkdir(parents=True, exist_ok=True)
 
-engine = create_engine(f"postgresql+psycopg://{DB_USER}:{DB_PASSWORD}@{DB_NAME}", echo=DB_ECHO)
+engine = create_engine(
+    URL.create(
+        "postgresql+psycopg", username=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT, database=DB_NAME
+    ),
+    echo=DB_ECHO
+)
+
 if DB_DROP_TABLE:
     Base.metadata.drop_all(engine)
 Base.metadata.create_all(engine)
@@ -78,7 +84,7 @@ def update_or_insert(item_info: dict):
 
 
 def dump(file):
-    table_name = 'ria_used_cars'
+    table_name = RiaUsedCars.__tablename__
     with engine.connect() as conn, conn.begin():
         data = pd.read_sql_table(table_name, conn)
         csv = data.to_csv(index=False)
