@@ -1,0 +1,46 @@
+#FROM postgres:15-bookworm
+FROM postgres:16.1
+LABEL Author="Semyon72"
+RUN apt-get update && apt-get install -y --no-install-recommends zip cron
+
+ARG DOT_ENV=/.env
+ARG HOST_DOT_ENV=.env
+ENV DOT_ENV=$DOT_ENV
+COPY $HOST_DOT_ENV $DOT_ENV
+
+###### CRON + TASK LOGGING
+ARG HOST_SCRIPT_DIR=./
+
+ARG CRON_DIR="/cron"
+ARG CRON_LOG_DIR="$CRON_DIR/logs"
+ARG CRON_EXPORT_DIR="$CRON_DIR/exports"
+ARG CRON_DUMP_DIR="$CRON_DIR/dumps"
+
+
+RUN mkdir "$CRON_DIR" "$CRON_LOG_DIR" "$CRON_DUMP_DIR" "$CRON_EXPORT_DIR" && chmod o+w "$CRON_LOG_DIR" "$CRON_EXPORT_DIR" "$CRON_DUMP_DIR"
+COPY ${HOST_SCRIPT_DIR}alive.sh ${HOST_SCRIPT_DIR}pg_dump.sh ${HOST_SCRIPT_DIR}pg_export.sh ${CRON_DIR}
+RUN chmod +x $CRON_DIR/*.sh
+
+# mandatory
+# chown --dereference postgres "/proc/1/fd/1" "/proc/1/fd/2"
+# to get access to /proc/1/fd/1
+# container should be ran as
+# docker run -p 5432:5432 -v scrap_postgres_data:/var/lib/postgresql/data -v scrap_db_dumps:/dumps --name scrap_postgres_server --rm scrap_postgres bash -c 'chown --dereference postgres "/proc/$$/fd/1" "/proc/$$/fd/2" && service cron start && docker-entrypoint.sh postgres'
+
+#         Min     H   Day   Month WeekDay - CMD
+RUN echo "*    *    *      *     *       postgres CRON_LOG_DIR=$CRON_LOG_DIR $CRON_DIR/alive.sh > /proc/1/fd/1 2>&1" > /etc/cron.d/alive
+RUN echo "* * * * * postgres CRON_EXPORT_DIR=$CRON_EXPORT_DIR DOT_ENV=$DOT_ENV $CRON_DIR/pg_export.sh > /proc/1/fd/1 2>&1" >> /etc/cron.d/pg_export
+RUN echo "* * * * * postgres CRON_DUMP_DIR=$CRON_DUMP_DIR DOT_ENV=$DOT_ENV $CRON_DIR/pg_dump.sh > /proc/1/fd/1 2>&1" >> /etc/cron.d/pg_dump
+
+COPY ${HOST_SCRIPT_DIR}01-scrap_postgres_init.sh /docker-entrypoint-initdb.d/
+RUN chmod +x /docker-entrypoint-initdb.d/01-scrap_postgres_init.sh
+
+ENV POSTGRES_PASSWORD=12qwaszx
+# $PGDATA by default is /var/lib/postgresql/data
+VOLUME ${PGDATA}
+VOLUME ${CRON_DUMP_DIR}
+
+EXPOSE 5432
+
+ENTRYPOINT ["/bin/bash", "-c"]
+CMD ["chown --dereference postgres /proc/$$/fd/1 /proc/$$/fd/2 && service cron start && docker-entrypoint.sh postgres"]

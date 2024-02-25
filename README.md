@@ -1,6 +1,8 @@
 # scrap.test.task
 Web scraping - Тестове завдання
 
+## [Автоматизація дампа та експорту таблиці в Docker контейнері](./dockerized_cron/Dockerfile-scrap-postgres.md)
+
 ## Інструкція з розгортання (Linux)
 1. Перейдіть до теки де плануєте встановити застосунок 
 ```
