@@ -1,15 +1,18 @@
 # IDE: PyCharm
 # Project: scrap.test.task
-
+import functools
 import os
 import datetime
 import zipfile
 from pathlib import Path
+from subprocess import Popen, PIPE
 
-import pandas as pd
-from sqlalchemy import String, Date, BigInteger, create_engine, text, URL
-from sqlalchemy.exc import NoResultFound
+from environs import Env
+from sqlalchemy import String, Date, BigInteger, create_engine, text, URL, Engine
+from sqlalchemy.exc import NoResultFound, OperationalError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, Session
+
+from app.helpers.env import prefixed_env_to_dict
 
 
 class Base(DeclarativeBase):
@@ -39,54 +42,128 @@ class RiaUsedCars(Base):
         return f"{self.url}"
 
 
-def booleanize(s: str) -> bool:
-    return False if s.lower() in ('false', '0', '0.0', '', 'none') else True
+class DBUtils:
+    env_db_config_prfx = 'DB_CONFIG'
+    env_db_option_prfx = 'DB_OPTION'
 
+    env_db_settings = {
+        env_db_config_prfx: ['USERNAME', 'PASSWORD', 'HOST', 'PORT', 'DATABASE'],
+        env_db_option_prfx: [('ECHO', Env.bool), ('DROP_TABLE', Env.bool), 'DUMPS_DIR']
+    }
+    default_dumps_dir = './dumps'
 
-DB_USER = os.getenv('DB_USER') or 'scrap_test_task_user'
-DB_PASSWORD = os.getenv('DB_PASSWORD') or '12345678'
-DB_HOST = os.getenv('DB_HOST') or 'localhost'
-DB_PORT = int(os.getenv('DB_PORT')) or 5432
-DB_NAME = os.getenv('DB_NAME') or 'scrap_test_task'
-DB_ECHO = booleanize(os.getenv('DB_ECHO') or 'True')
-DB_DROP_TABLE = booleanize(os.getenv('DB_DROP_TABLE') or 'False')
-DUMPS_DIR = os.getenv('DUMPS_DIR') or './dumps'
+    def __init__(self, env: Env):
+        self.env = env
 
-if not Path(DUMPS_DIR).is_dir():
-    Path(DUMPS_DIR).mkdir(parents=True, exist_ok=True)
+    @functools.cached_property
+    def engine(self):
+        engine = self.check_db()
+        db_opts = self._prefixed_env_to_dict(self.env_db_option_prfx)
+        if db_opts.get('drop_table', False):
+            Base.metadata.drop_all(engine)
+        Base.metadata.create_all(engine)
+        return engine
 
-engine = create_engine(
-    URL.create(
-        "postgresql+psycopg", username=DB_USER, password=DB_PASSWORD, host=DB_HOST, port=DB_PORT, database=DB_NAME
-    ),
-    echo=DB_ECHO
-)
+    @functools.lru_cache
+    def _prefixed_env_to_dict(self, env_db_setting: str = None):
+        env_db_setting = env_db_setting or next(iter(self.env_db_settings.keys()))
+        res = prefixed_env_to_dict(self.env, env_db_setting, self.env_db_settings[env_db_setting])
+        return res
 
-if DB_DROP_TABLE:
-    Base.metadata.drop_all(engine)
-Base.metadata.create_all(engine)
+    def check_db(self) -> Engine:
+        user_cred = self._prefixed_env_to_dict(self.env_db_config_prfx)
+        pg_cred = user_cred | {
+            'database': self.env('POSTGRES_DB', 'postgres'),
+            'username': self.env('POSTGRES_USER', 'postgres'),
+            'password': self.env('POSTGRES_PASSWORD', ''),
+        }
+        db_opts = self._prefixed_env_to_dict(self.env_db_option_prfx)
+        echo = db_opts.get('echo', True)
 
-
-def update_or_insert(item_info: dict):
-    with Session(engine) as session:
-        url = item_info['url']
+        pg_url = URL.create("postgresql+psycopg", **pg_cred)
+        engine = create_engine(pg_url, echo=echo)
         try:
-            car: RiaUsedCars = session.query(RiaUsedCars).filter(RiaUsedCars.url == url).with_for_update().one()
-        except NoResultFound as exc:
-            car = RiaUsedCars(**item_info)
-            session.add(car)
+            con = engine.connect()
+        except OperationalError as exc:
+            # bad connection for default postgres credentials
+            # psycopg.OperationalError: connection failed: FATAL:  password authentication failed for user "postgres"
+            raise
         else:
-            for n, v in item_info.items():
-                if n not in (RiaUsedCars.url, RiaUsedCars.id):
-                    setattr(car, n, v)
+            # if used default user - nothing to check
+            usr_url = URL.create("postgresql+psycopg", **user_cred)
+            if pg_url == usr_url:
+                return engine
 
-        session.commit()
+            # set isolation_level="AUTOCOMMIT"
+            con.execution_options(isolation_level='AUTOCOMMIT')
 
+            # test database existing
+            sql = "SELECT datname FROM pg_catalog.pg_database WHERE lower(datname) = lower(:database);"
+            result = con.execute(text(sql), {'database': user_cred['database']})
+            if result.one_or_none() is None:
+                # check user
+                sql = "SELECT usename FROM pg_catalog.pg_user WHERE lower(usename) = lower(:username);"
+                result = con.execute(text(sql), {'username': user_cred['username']})
+                if result.one_or_none() is None:
+                    # user does not exist
+                    con.execute(text(f"CREATE USER {user_cred['username']} PASSWORD '{user_cred['password']}'"))
 
-def dump(file):
-    table_name = RiaUsedCars.__tablename__
-    with engine.connect() as conn, conn.begin():
-        data = pd.read_sql_table(table_name, conn)
-        csv = data.to_csv(index=False)
-        with zipfile.ZipFile(file, 'a') as _zip:
-            _zip.writestr(f'{table_name}-{datetime.datetime.now()}.csv', csv)
+                con.execute(text(f'CREATE DATABASE {user_cred["database"]} WITH OWNER={user_cred["username"]}'))
+        finally:
+            engine.dispose()
+
+        return create_engine(usr_url, echo=echo)
+
+    def update_or_insert(self, item_info: dict):
+        with Session(self.engine) as session:
+            url = item_info['url']
+            try:
+                car: RiaUsedCars = session.query(RiaUsedCars).filter(RiaUsedCars.url == url).with_for_update().one()
+            except NoResultFound as exc:
+                car = RiaUsedCars(**item_info)
+                session.add(car)
+            else:
+                for n, v in item_info.items():
+                    if n not in (RiaUsedCars.url, RiaUsedCars.id):
+                        setattr(car, n, v)
+
+            session.commit()
+
+    @functools.cached_property
+    def dump_path(self) -> Path:
+        db_opts = self._prefixed_env_to_dict(self.env_db_option_prfx)
+        dump_path = Path(db_opts.get('dumps_dir', self.default_dumps_dir))
+        if not dump_path.is_dir():
+            dump_path.mkdir(parents=True, exist_ok=True)
+
+        return dump_path
+
+    def _dump_export(self, popen_args: list, zip_name: str, file_name: str):
+        usr_db_conf = self._prefixed_env_to_dict(self.env_db_config_prfx)
+        env = os.environ | {
+            'PGPASSWORD': usr_db_conf['password'],
+            'PGDATABASE': usr_db_conf['database'],
+            'PGHOST': usr_db_conf['host'],
+            'PGPORT': usr_db_conf['port'],
+            'PGUSER': usr_db_conf['username']
+        }
+        with Popen(popen_args, stdout=PIPE, env=env) as proc:
+            with zipfile.ZipFile(zip_name, 'a') as _zip:
+                _zip.writestr(file_name, proc.stdout.read())
+
+    def dump(self, zip_name: str = None):
+        if not zip_name:
+            zip_name = f'{str(self.dump_path)}/dump-{datetime.date.today()}.zip'
+
+        table_name = RiaUsedCars.__tablename__
+        self._dump_export(
+            ["pg_dump", "-t", f"{table_name}"], zip_name, f'{table_name}-{datetime.datetime.now()}.sql'
+        )
+
+    def to_csv(self, zip_name: str = None):
+        if not zip_name:
+            zip_name = f'{str(self.dump_path)}/export-{datetime.date.today()}.zip'
+
+        table_name = RiaUsedCars.__tablename__
+        cmd = f"copy {table_name} TO STDOUT DELIMITER ',' CSV ENCODING 'UTF8' QUOTE '\"' ESCAPE '''' HEADER;"
+        self._dump_export(["psql", "-c", cmd], zip_name, f'{table_name}-{datetime.datetime.now()}.csv')
