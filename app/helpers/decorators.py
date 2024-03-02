@@ -1,5 +1,3 @@
-# TODO: write scheduler decorator - for logging (wrap the executor.db.dump, ....)
-#  and run_once raise CancelJob
 import datetime
 import functools
 
