@@ -1,5 +1,5 @@
 import os
-from typing import Callable, Union, Mapping
+from typing import Callable, Optional
 
 import marshmallow as ma
 
@@ -20,7 +20,7 @@ def prefixed_env_to_dict(env: Env, prefix: str, sufixes: list):
     return res
 
 
-class ScheduleTabItem(ma.Schema):
+class ScheduleJobSchema(ma.Schema):
     __model__ = Job
 
     schedule_weekdays = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
@@ -38,15 +38,34 @@ class ScheduleTabItem(ma.Schema):
     tag = ma.fields.String(load_only=True)
     run_once = ma.fields.Bool(load_default=False, load_only=True)
 
+    def __init__(self, *args, do_map: dict[str, Callable], **kwargs):
+        self.do_map = do_map
+        super().__init__(*args, **kwargs)
+
     def data2job(self, data: dict, **kwargs):
+        """
+        !!! It does not initialize `do` and `scheduler` attributes
+        But all other will be checked and initialized.
+
+        :param data:
+        :param kwargs:
+        :return: ScheduleJob validated and prepared instance
+        """
+
         errors = {}
         job = self.__model__(data.pop('interval'))
-        job._do_name = data.pop('do')
-        job._run_once = data.pop('run_once')
+        do_name = data.pop('do')
+        if not isinstance(self.do_map.get(do_name), Callable):
+            errors['do'] = f"Value '{do_name}' is not valid. Available values are {[*self.do_map.keys()]}"
+        else:
+            job.do_name = do_name
 
-        for fn, v in data.items():
+        # Job has no run_once attribute. Remove it before preparation.
+        job.run_once = data.pop('run_once')
+
+        for fname, v in data.items():
             try:
-                attr = getattr(job, fn)  # if this property it (as side effect) will set a right value of job.unit
+                attr = getattr(job, fname)  # if this property it (as side effect) will set a right value of job.unit
                 if attr is not job and isinstance(attr, Callable):
                     attr(v)
                 else:
@@ -55,7 +74,7 @@ class ScheduleTabItem(ma.Schema):
 
             except Exception as exc:
                 if isinstance(exc, (AttributeError, KeyError, ScheduleValueError)):
-                    errors[fn] = str(exc)
+                    errors[fname] = str(exc)
                 else:
                     raise exc
         if errors:
@@ -67,11 +86,11 @@ class ScheduleTabItem(ma.Schema):
         return self.data2job(data, **kwargs)
 
 
-def load_jobs(env: Env, obj: Union[object, dict], scheduler: Scheduler = None):
+def load_jobs(env: Env, do_map: dict[str, Callable], scheduler: Scheduler = None):
     """
     Loads Job-s from environment to schedules
     :param env: Env to get env.dict('SCHEDTAB_NN')
-    :param obj: class or object where the functions or methods will be looking
+    :param do_map: dict mapping the environment job 'do' name to a Callable
     :param scheduler:
     :return Scheduler: new or passed
     """
@@ -79,44 +98,12 @@ def load_jobs(env: Env, obj: Union[object, dict], scheduler: Scheduler = None):
     if not scheduler:
         scheduler = Scheduler()
 
-    def find_callable(fn_name: str, obj: Union[object, Mapping]) -> Callable:
-        parts = fn_name.split('.')
-
-        dparts = [p for p in parts if p.startswith('_')]
-        if dparts:
-            raise ValueError(f'protected and private attributes forbidden {dparts}')
-
-        lparts = len(parts)
-        if not lparts:
-            if isinstance(obj, Callable):
-                return obj
-            else:
-                raise ValueError(f'`fn_name` is empty but `obj` is not Callable')
-
-        if isinstance(obj, Mapping):
-            if lparts < 2:
-                raise ValueError(
-                    f'`obj` is Mapping but fn_name is not dot separated. Try pass "key_in_obj.{parts[0]}"'
-                )
-            # get object by key
-            obj = obj[parts.pop(0)]
-
-        fn = obj
-        for attr in parts:
-            fn = getattr(fn, attr)
-
-        if not isinstance(fn, Callable):
-            raise ValueError(
-                f'`{fn_name}` attribute of `obj` isn\'t Callable.'
-            )
-        return fn
-
     for tab_name in (k for k in os.environ if k.startswith(vname)):
-        job: Job = ScheduleTabItem().load(env.dict(tab_name))
-        fn = find_callable(job._do_name, obj)
-        if job._run_once:
-            fn = run_once(fn)
+        job: Job = ScheduleJobSchema(do_map=do_map).load(env.dict(tab_name))
+        func = do_map[job.do_name]
+        if job.run_once:
+            func = run_once(func)
         job.scheduler = scheduler
-        job.do(fn)
+        job.do(func)
 
     return scheduler

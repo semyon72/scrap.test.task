@@ -105,15 +105,13 @@ class Executor:
             time.sleep((stime - datetime.datetime.now()).seconds)
 
     def execute(self):
-        # executor = Executor(env)
-
-        obj = type('JobsHolder', (object,), {})
-        obj.dump = log(self.db.dump)
-        obj.to_csv = log(self.db.to_csv)
-        obj.scrap = log(self.scrap)
-        obj.alive = log(functools.partial(logger.debug, f'I am alive'))
-
-        scheduler = load_jobs(env, obj)
+        do_map = {
+            'dump': log(self.db.dump),
+            'to_csv': log(self.db.to_csv),
+            'scrap': log(self.scrap),
+            'alive': log(functools.partial(logger.debug, f'I am alive'))
+        }
+        scheduler = load_jobs(env, do_map)
 
         logger.info('Starting')
         i, l_jobs = 0, len(scheduler.jobs)
