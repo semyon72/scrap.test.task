@@ -1,0 +1,32 @@
+services:
+  db:
+    image: postgres:${POSTGRES_VERSION}-${POSTGRES_OS_CODENAME}
+    env_file:
+      - .env
+    container_name: postgres_${POSTGRES_VERSION}_scrap
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:${PGDATA}
+    networks:
+      - scrap
+
+  app:
+    build: .
+    env_file:
+      - .env
+    container_name: "scraper-app"
+    depends_on:
+      - db
+    networks:
+      - scrap
+
+    volumes:
+      - dumps-data:${DB_OPTION_DUMPS_DIR}
+
+networks:
+  scrap:
+
+volumes:
+  db-data:
+  dumps-data:
