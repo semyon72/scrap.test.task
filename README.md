@@ -8,17 +8,21 @@ Web scraping - Тестове завдання
 2. Багато параметрів із .env минулої версії не сумісні з поточною
 3. .pid файл не використовується
 4. Додано logging (коментарі в .env)
-5. Параметри POSTGRES_VERSION, POSTGRES_OS_CODENAME та PGDATA - не використовуються на безпосередньо в application,
-а синхронізують Docker клієнта в application з Docker PostgreSQL сервером.
+5. Параметри POSTGRES_VERSION, POSTGRES_OS_CODENAME та PGDATA - не використовуються безпосередньо в application,
+а синхронізують версії PostgreSQL клієнта в application контейнері з Docker PostgreSQL сервером.
    > POSTGRES_VERSION=16.1 вказаний в .env використано для кешування (присутній в мене).
-   > Для запуску, якщо ще не було підтягнуто жодного image PostgreSQL краще вказувати 15, 14, 13, ...  
+   > Для запуску, якщо ще не було підтягнуто жодного image PostgreSQL краще вказувати 16, 15, 13, ...  
 6. POSTGRES_PASSWORD, POSTGRES_USER, POSTGRES_DB - Використовуються для налагодження БД для використання DB_CONFIG_*
    > після того як перевірено наявність користувача та бази даних (утворюється за необхідності) надалі використовуються
    > DB_CONFIG_HOST, DB_CONFIG_PORT, DB_CONFIG_PASSWORD, DB_CONFIG_USERNAME, DB_CONFIG_DATABASE
 7. Додано Dockerfile та docker-compose.yml 
    > DB_CONFIG_HOST в .env зазначено у відповідності до docker-compose.yml 
 
-## Інструкція з розгортання (Linux)
+## Розгортання Docker compose
+1. `cd directory_with_docker-compose.yml`
+2. `docker compose up`
+
+## Ручне розгортання (Linux)
 1. Перейдіть до теки де плануєте встановити застосунок 
    ```
       $ cd some_dir/ 
