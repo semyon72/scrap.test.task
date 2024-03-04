@@ -12,13 +12,16 @@ ARG POSTGRES_VERSION=16
 ARG POSTGRES_OS_CODENAME=bookworm
 ARG DB_OPTION_DUMPS_DIR=/app/dumps
 
+ENV POSTGRES_VERSION=$POSTGRES_VERSION
+ENV POSTGRES_OS_CODENAME=$POSTGRES_OS_CODENAME
+ENV DB_OPTION_DUMPS_DIR=$DB_OPTION_DUMPS_DIR
 
 # Create the file repository configuration:
 RUN echo "deb https://apt.postgresql.org/pub/repos/apt ${POSTGRES_OS_CODENAME}-pgdg main" > /etc/apt/sources.list.d/pgdg.list
 # Import the repository signing key:
 RUN wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
 # Update the package lists && certain version of PostgreSQL.
-RUN apt-get update && apt-get -y install postgresql-client-${POSTGRES_VERSION} && pg_dump -V
+RUN apt-get update && apt-get -y install postgresql-client-${POSTGRES_VERSION%%.*} && pg_dump -V
 
 COPY requirements.txt /requirements.txt
 RUN pip install -r /requirements.txt
@@ -30,11 +33,3 @@ VOLUME ${DB_OPTION_DUMPS_DIR}
 
 WORKDIR /app
 CMD ["python3", "main.py"]
-
-
-
-
-
-
-
-
